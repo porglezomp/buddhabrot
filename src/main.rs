@@ -1,13 +1,16 @@
+extern crate sdl2;
 extern crate image;
 extern crate rand;
 
-use std::path::Path;
+use std::io::{self, Read, Write};
 use std::ops::{Add, Sub, Mul};
 use rand::{Rand, Rng};
 use rand::distributions::{IndependentSample, Range};
 use std::thread;
 use std::sync::{Arc, Mutex};
+use std::sync::mpsc::{Sender, channel};
 
+use sdl2::event::Event;
 
 #[derive(PartialEq, Clone, Copy)]
 struct Complex {
@@ -18,7 +21,7 @@ struct Complex {
 
 impl Rand for Complex {
     fn rand<R: Rng>(rand: &mut R) -> Self {
-        let range = Range::new(-2.0, 2.0);
+        let range = Range::new(-3.5, 3.5);
         Complex {
             r: range.ind_sample(rand),
             i: range.ind_sample(rand),
@@ -74,46 +77,50 @@ impl Sub for Complex {
 
 struct Buffer {
     buffer: Box<[u32]>,
-    width: usize,
-    height: usize,
+    width: u64,
+    height: u64,
     origin: Complex,
     extent: Complex,
 }
 
 impl Buffer {
-    fn new(width: usize, height: usize) -> Self {
+    fn new(width: u64, height: u64, origin: Complex, extent: Complex) -> Self {
         Buffer {
-            buffer: vec![0; width * height].into_boxed_slice(),
+            buffer: vec![0; (width * height) as usize].into_boxed_slice(),
             width: width,
             height: height,
-            origin: Complex::from_floats(0.0, -0.3),
-            extent: Complex::from_floats(1.6, 1.6),
+            origin: origin,
+            extent: extent,
         }
     }
 
     fn increment(&mut self, point: &Complex) {
         let offset = *point - self.origin;
-        let x = ((offset.i / self.extent.i + 1.0) / 2.0 * self.width as f64) as usize;
-        let y = ((offset.r / self.extent.r + 1.0) / 2.0 * self.width as f64) as usize;
+        let x = ((offset.i / self.extent.i + 1.0) / 2.0 * self.width as f64) as u64;
+        let y = ((offset.r / self.extent.r + 1.0) / 2.0 * self.width as f64) as u64;
 
         if x >= self.width || y >= self.height {
             return;
         }
 
-        self.buffer[x + y * self.width] += 1;
+        self.buffer[(x + y * self.width) as usize] += 1;
     }
 }
 
-fn buddhabrot(buf: &mut Buffer, iterations: usize) {
-    let mut positions = Vec::with_capacity(iterations);
+fn buddhabrot(buf: &mut Buffer, iterations: u64) {
+    let mut positions = Vec::with_capacity(iterations as usize);
     let c = Complex::rand(&mut rand::thread_rng());
     let mut z = Complex::default();
 
     let mut escaped = 0;
     for _ in 0..iterations {
         z = z * z + c;
-        if z.escaped() { escaped += 1; }
-        if escaped >= 6 { break; }
+        if z.escaped() {
+            escaped += 1;
+        }
+        if escaped >= 2 {
+            break;
+        }
         positions.push(z);
     }
 
@@ -124,88 +131,101 @@ fn buddhabrot(buf: &mut Buffer, iterations: usize) {
     }
 }
 
+fn worker(tx: Sender<Box<[u32]>>,
+          limit: u32,
+          width: u32,
+          height: u32,
+          origin: Complex,
+          extent: Complex) {
+    loop {
+        let mut data = Buffer::new(width as u64, height as u64, origin, extent);
 
-fn main() {
-    let (r, g, b) = (20, 200, 2000);
-    let width = 2048;
-    let height = 2048;
-    let n_iters = 10000000;
-    let n_threads = 4;
-    struct Res {
-        red: Buffer,
-        green: Buffer,
-        blue: Buffer,
-    }
-    let results = Arc::new(Mutex::new(Vec::new()));
-    let mut threads = Vec::new();
-    for _ in 0..n_threads {
-        let res = results.clone();
-        threads.push(thread::spawn(move || {
-            let mut red = Buffer::new(width, height);
-            let mut green = Buffer::new(width, height);
-            let mut blue = Buffer::new(width, height);
+        for _ in 0..30000 {
+            buddhabrot(&mut data, limit as u64);
+        }
 
-            for _ in 0..(n_iters/n_threads) {
-                for _ in 0..(1000/r)+1 {
-                    buddhabrot(&mut red, r);
-                }
-                for _ in 0..(1000/g)+1 {
-                    buddhabrot(&mut green, g);
-                }
-                for _ in 0..(1000/b)+1 {
-                    buddhabrot(&mut blue, b);
-                }
-            }
-
-            let mut res = res.lock().unwrap();
-            res.push(Res {
-                red: red,
-                green: green,
-                blue: blue,
-            });
-        }));
-    }
-
-    for thread in threads { thread.join().unwrap(); }
-
-    let size = width * height;
-    let mut reds = vec![0; size];
-    let mut greens = vec![0; size];
-    let mut blues = vec![0; size];
-
-    let results = results.lock().unwrap();
-    for result in results.iter() {
-        for i in 0..size {
-            reds[i] += result.red.buffer[i];
-            greens[i] += result.green.buffer[i];
-            blues[i] += result.blue.buffer[i];
+        match tx.send(data.buffer) {
+            Ok(()) => (),
+            Err(_) => break,
         }
     }
+}
 
-    let zero = 0;
-    let r_min = reds.iter().min().unwrap_or(&zero);
-    let r_max = reds.iter().max().unwrap_or(&zero);
-    let r_range = if r_min == r_max { 1 } else { r_max - r_min };
-    let g_min = greens.iter().min().unwrap_or(&zero);
-    let g_max = greens.iter().max().unwrap_or(&zero);
-    let g_range = if g_min == g_max { 1 } else { g_max - g_min };
-    let b_min = blues.iter().min().unwrap_or(&zero);
-    let b_max = blues.iter().max().unwrap_or(&zero);
-    let b_range = if b_min == b_max { 1 } else { b_max - b_min };
+fn main() {
+    let limit = 200;
+    let width = 512;
+    let height = 512;
+    let n_threads = 4;
+    let origin = Complex::from_floats(0.0, -1.0);
+    let extent = Complex::from_floats(1.5, 1.5);
+    // let origin = Complex::from_floats(-0.0443594, -0.9876749);
+    // let extent = Complex::from_floats(0.015, 0.015);
 
-    let mut buffer = Vec::with_capacity(3 * size);
-    for i in 0..size {
-        buffer.push(((reds[i] - r_min) * 255 / r_range) as u8);
-        buffer.push(((greens[i] - g_min) * 255 / g_range) as u8);
-        buffer.push(((blues[i] - b_min) * 255 / b_range) as u8);
+    let window_width = width;
+    let window_height = height;
+
+    let ctx = sdl2::init().unwrap();
+    let video_ctx = ctx.video().unwrap();
+    let mut event_pump = ctx.event_pump().unwrap();
+
+    let window = video_ctx.window("", window_width, window_height)
+        .position_centered()
+        .opengl()
+        .build()
+        .unwrap();
+
+    let mut renderer: sdl2::render::Renderer = window.renderer().build().unwrap();
+
+    let mut texture: sdl2::render::Texture =
+        renderer.create_texture_streaming(sdl2::pixels::PixelFormatEnum::RGB24,
+                                      window_width,
+                                      window_height)
+            .unwrap();
+
+    let (tx, rx) = channel();
+
+    for _ in 0..n_threads {
+        let tx = tx.clone();
+        thread::spawn(move || worker(tx, limit, width, height, origin, extent));
     }
 
-    image::save_buffer(Path::new("image.png"),
-                       &buffer,
-                       width as u32,
-                       height as u32,
-                       image::RGB(8))
-        .unwrap();
-    println!("\r100%");
-    println!("R: {} {}\nG: {} {}\nB: {} {}", r_min, r_max, g_min, g_max, b_min, b_max);
+    let mut buffer = vec![0u32; (width * height) as usize];
+    let mut display_buffer = vec![0u8; (width * height) as usize * 3];
+    let mut changed = true;
+    'all: loop {
+        while let Ok(data) = rx.try_recv() {
+            for (target, elem) in buffer.iter_mut().zip(data.iter()) {
+                *target += *elem;
+            }
+            changed = true;
+        }
+
+        if changed {
+            changed = false;
+
+            let min = buffer.iter().min().cloned().unwrap_or(0);
+            let max = buffer.iter().max().cloned().unwrap_or(0);
+            let range = if min == max { 1 } else { max - min };
+            for (target, elem) in display_buffer.chunks_mut(3).zip(buffer.iter()) {
+                let x = ((*elem - min) * 255 / range) as u8;
+                target[0] = x;
+                target[1] = x;
+                target[2] = x;
+            }
+
+            texture.update(None, &display_buffer, width as usize * 3).unwrap();
+            texture.set_blend_mode(sdl2::render::BlendMode::Blend);
+            texture.set_alpha_mod(255);
+            renderer.copy(&texture, None, None).unwrap();
+            renderer.present();
+            renderer.copy(&texture, None, None).unwrap();
+        }
+
+        for event in event_pump.poll_iter() {
+            match event {
+                Event::Quit { .. } => break 'all,
+                _ => (),
+            }
+        }
+    }
 }
