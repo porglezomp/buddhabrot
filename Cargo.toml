@@ -1,0 +1,8 @@
+[package]
+name = "buddhabrot"
+version = "0.1.0"
+authors = ["Caleb Jones <code@calebjones.net>"]
+
+[dependencies]
+image = "^0.10"
+rand = "0.3"
