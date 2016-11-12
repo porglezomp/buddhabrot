@@ -212,7 +212,8 @@ fn worker(tx: Sender<Box<[[u32; 3]]>>,
     }
 }
 
-fn update_texture(width: u32,
+fn update_texture(width: u32, height: u32,
+                  window_width: u32, window_height: u32,
                   renderer: &mut Renderer,
                   texture: &mut Texture,
                   display_buffer: &mut [u8],
@@ -252,13 +253,22 @@ fn update_texture(width: u32,
         }
     }
 
-    for (target, elem) in display_buffer.chunks_mut(3).zip(buffer.iter()) {
+    let skip_x = (width / window_width) as usize;
+    let skip_y = (height / window_height) as usize;
+
+    // Skip rows and columns in order to down-sample appropriately
+    let pix = buffer.chunks(width as usize * skip_y)
+        .flat_map(|part| part[..width as usize]
+                  .chunks(skip_x)
+                  .map(|x| x[0]));
+
+    for (target, elem) in display_buffer.chunks_mut(3).zip(pix) {
         target[0] = gain(elem[0] as f64 / r_max as f64, 0.2);
         target[1] = gain(elem[1] as f64 / g_max as f64, 0.2);
         target[2] = gain(elem[2] as f64 / b_max as f64, 0.2);
     }
 
-    texture.update(None, &display_buffer, width as usize * 3).unwrap();
+    texture.update(None, &display_buffer, window_width as usize * 3).unwrap();
     texture.set_blend_mode(sdl2::render::BlendMode::Blend);
     texture.set_alpha_mod(255);
     renderer.copy(&texture, None, None).unwrap();
@@ -269,18 +279,32 @@ fn update_texture(width: u32,
 fn main() {
     let start_time = time::SystemTime::now();
     let limits = [50000, 5000, 500];
-    let width = 700;
-    let height = 700;
+    let width = 8192;
+    let height = 8192;
     let n_threads = 4;
     // let origin = Complex::from_floats(-0.1592, -1.0317);
-    // let origin = Complex::from_floats(0.0, 0.0);
-    // let zoom = 0.3;
+    let origin = Complex::from_floats(-0.3, 0.0);
+    let zoom = 0.3;
     // let extent = Complex::from_floats(1.5, 1.5);
-    let origin = Complex::from_floats(-1.25275, -0.343);
-    let zoom = 350.0;
 
-    let window_width = width;
-    let window_height = height;
+    // let origin = Complex::from_floats(-0.1592, -1.0317);
+    // let zoom = 80.5;
+    // let origin = Complex::from_floats(-0.529854097, -0.667968575);
+    // let zoom = 80.5;
+    // let origin = Complex::from_floats(-0.657560793, 0.467732884);
+    // let zoom = 70.5;
+    // let origin = Complex::from_floats(-1.185768799, 0.302592593);
+    // let zoom = 90.5;
+    // let origin = Complex::from_floats(0.443108035, 0.345012263);
+    // let zoom = 4000.0;
+    // let origin = Complex::from_floats(-0.647663050, 0.380700837);
+    // let zoom = 1275.0;
+
+    // let origin = Complex::from_floats(-1.25275, -0.343);
+    // let zoom = 350.0;
+
+    let window_width = 512;
+    let window_height = 512;
 
     let ctx = sdl2::init().unwrap();
     let video_ctx = ctx.video().unwrap();
@@ -309,7 +333,7 @@ fn main() {
     }
 
     let mut buffer = vec![[0_u32; 3]; (width * height) as usize];
-    let mut display_buffer = vec![0_u8; (width * height) as usize * 3];
+    let mut display_buffer = vec![0_u8; (window_width * window_height) as usize * 3];
     let mut changed = false;
     let mut number_batches = 0;
     'all: loop {
@@ -330,7 +354,8 @@ fn main() {
 
         if changed {
             changed = false;
-            update_texture(width,
+            update_texture(width, height,
+                           window_width, window_height,
                            &mut renderer,
                            &mut texture,
                            &mut display_buffer,
@@ -354,7 +379,15 @@ fn main() {
         }
     }
 
+    let mut image_buffer = vec![0_u8; (width * height) as usize * 3];
+    update_texture(width, height,
+                   width, height,
+                   &mut renderer,
+                   &mut texture,
+                   &mut image_buffer,
+                   &buffer);
+
     if let Some(fname) = env::args().nth(1) {
-        image::save_buffer(fname, &display_buffer, width, height, image::RGB(8)).unwrap();
+        image::save_buffer(fname, &image_buffer, width, height, image::RGB(8)).unwrap();
     }
 }
