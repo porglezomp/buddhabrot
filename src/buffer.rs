@@ -1,7 +1,7 @@
 use complex::Complex;
 
 pub struct Buffer {
-    pub buffer: Box<[u32]>,
+    pub buffer: Box<[[u32; 3]]>,
     pub width: u64,
     pub height: u64,
     pub origin: Complex,
@@ -11,7 +11,7 @@ pub struct Buffer {
 impl Buffer {
     pub fn new(width: u64, height: u64, origin: Complex, zoom: f64) -> Self {
         Buffer {
-            buffer: vec![0; (width * height) as usize].into_boxed_slice(),
+            buffer: vec![[0_u32; 3]; (width * height) as usize].into_boxed_slice(),
             width: width,
             height: height,
             origin: origin,
@@ -32,13 +32,17 @@ impl Buffer {
         (x, y)
     }
 
-    pub fn increment(&mut self, point: Complex) -> bool {
+    pub fn increment(&mut self, idx: usize, point: Complex) -> bool {
+        if idx >= 3 {
+            return false;
+        }
+
         let (x, y) = self.project(point);
         if x >= self.width || y >= self.height {
             return false;
         }
 
-        self.buffer[(x + y * self.width) as usize] += 1;
+        self.buffer[(x + y * self.width) as usize][idx] += 1;
         true
     }
 

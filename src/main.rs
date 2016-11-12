@@ -2,6 +2,7 @@ extern crate sdl2;
 extern crate image;
 extern crate rand;
 
+use std::time;
 use std::env;
 use rand::{Rand, Rng};
 use rand::distributions::{Range, IndependentSample};
@@ -131,40 +132,32 @@ fn warmup(buf: &Buffer, samples: &mut Vec<(Complex, f64)>) {
     let range = Range::new(0.0, 1.0);
     let mut rng = rand::thread_rng();
 
-    for &mut (ref mut c0, ref mut contrib) in samples {
-        let mut c = *c0;
-        let mut cur_contrib = *contrib;
+    let mut current = Vec::with_capacity(limit as usize);
+    let mut proposed = Vec::with_capacity(limit as usize);
+    for _ in 0..10000 {
+        for &mut (ref mut c, ref mut contrib) in samples.iter_mut() {
+            evaluate(*c, limit, &mut current);
+            let c2 = mutate(*c, buf.zoom);
 
-        let mut current = Vec::with_capacity(limit as usize);
-        evaluate(c, limit, &mut current);
-        let mut prop_contrib;
-        let mut proposed = Vec::with_capacity(limit as usize);
-
-        for _ in 0..10000 {
-            let c2 = mutate(c, buf.zoom);
             if let Some(_) = evaluate(c2, limit, &mut proposed) {
                 let count = proposed.iter().filter(|x| buf.check(**x)).count();
                 if count == 0 {
                     continue;
                 }
-                prop_contrib = count as f64 / limit as f64;
+                let proposed_contrib = count as f64 / limit as f64;
 
-                let alpha = accept_prob(limit, &current, cur_contrib, &proposed, prop_contrib);
+                let alpha = accept_prob(limit, &current, *contrib, &proposed, proposed_contrib);
                 if range.ind_sample(&mut rng) < alpha {
-                    c = c2;
-                    cur_contrib = prop_contrib;
-                    std::mem::swap(&mut current, &mut proposed);
+                    *c = c2;
+                    *contrib = proposed_contrib;
                 }
             }
         }
-
-        *c0 = c;
-        *contrib = cur_contrib;
     }
 }
 
-fn worker(tx: Sender<Box<[u32]>>,
-          limit: u32,
+fn worker(tx: Sender<Box<[[u32; 3]]>>,
+          limits: [u32; 3],
           width: u32,
           height: u32,
           origin: Complex,
@@ -180,41 +173,36 @@ fn worker(tx: Sender<Box<[u32]>>,
         warmup(&data, &mut samples);
     }
 
+    let max_limit = limits.iter().max().cloned().unwrap();
+    let mut current = Vec::with_capacity(max_limit as usize);
+    let mut proposed = Vec::with_capacity(max_limit as usize);
+
     loop {
         data = Buffer::new(width as u64, height as u64, origin, zoom);
+        for _ in 0..1000 {
+            for &mut (ref mut c, ref mut contrib) in &mut samples {
+                for (i, &limit) in limits.iter().enumerate() {
+                    evaluate(*c, limit, &mut current);
+                    let c2 = mutate(*c, data.zoom);
 
-        for &mut (ref mut c0, ref mut contrib) in &mut samples {
-            let mut c = *c0;
-            let mut cur_contrib = *contrib;
+                    if let Some(_) = evaluate(c2, limit, &mut proposed) {
+                        let count = proposed.iter().filter(|x| data.check(**x)).count();
+                        if count == 0 {
+                            continue;
+                        }
+                        let proposed_contrib = count as f64 / limit as f64;
 
-            let mut current = Vec::with_capacity(limit as usize);
-            evaluate(c, limit, &mut current);
-            let mut prop_contrib: f64;
-            let mut proposed = Vec::with_capacity(limit as usize);
-
-            for _ in 0..1000 {
-                let c2 = mutate(c, data.zoom);
-                if let Some(_) = evaluate(c2, limit, &mut proposed) {
-                    let count = proposed.iter().filter(|x| data.check(**x)).count();
-                    if count == 0 {
-                        continue;
-                    }
-                    prop_contrib = count as f64 / limit as f64;
-
-                    let alpha = accept_prob(limit, &current, cur_contrib, &proposed, prop_contrib);
-                    if range.ind_sample(&mut rng) < alpha || !USE_METROPOLIS {
-                        c = c2;
-                        cur_contrib = prop_contrib;
-                        std::mem::swap(&mut current, &mut proposed);
-                        for &point in &current {
-                            data.increment(point);
+                        let alpha = accept_prob(limit, &current, *contrib, &proposed, proposed_contrib);
+                        if range.ind_sample(&mut rng) < alpha || !USE_METROPOLIS {
+                            *c = c2;
+                            *contrib = proposed_contrib;
+                            for &point in &current {
+                                data.increment(i, point);
+                            }
                         }
                     }
                 }
             }
-
-            *c0 = c;
-            *contrib = cur_contrib;
         }
 
         match tx.send(data.buffer) {
@@ -228,7 +216,7 @@ fn update_texture(width: u32,
                   renderer: &mut Renderer,
                   texture: &mut Texture,
                   display_buffer: &mut [u8],
-                  buffer: &[u32]) {
+                  buffer: &[[u32; 3]]) {
     fn gain(x: f64, val: f64) -> u8 {
         fn clamp(x: f64) -> u8 {
             match x {
@@ -249,12 +237,25 @@ fn update_texture(width: u32,
         } * 256.0)
     }
 
-    let max = buffer.iter().max().cloned().unwrap_or(0);
+    let mut r_max = 0;
+    let mut g_max = 0;
+    let mut b_max = 0;
+    for pix in buffer {
+        if pix[0] > r_max {
+            r_max = pix[0];
+        }
+        if pix[1] > g_max {
+            g_max = pix[1];
+        }
+        if pix[2] > b_max {
+            b_max = pix[2];
+        }
+    }
+
     for (target, elem) in display_buffer.chunks_mut(3).zip(buffer.iter()) {
-        let x = gain(*elem as f64 / max as f64, 0.2);
-        target[0] = x;
-        target[1] = x;
-        target[2] = x;
+        target[0] = gain(elem[0] as f64 / r_max as f64, 0.2);
+        target[1] = gain(elem[1] as f64 / g_max as f64, 0.2);
+        target[2] = gain(elem[2] as f64 / b_max as f64, 0.2);
     }
 
     texture.update(None, &display_buffer, width as usize * 3).unwrap();
@@ -266,7 +267,8 @@ fn update_texture(width: u32,
 }
 
 fn main() {
-    let limit = 5000;
+    let start_time = time::SystemTime::now();
+    let limits = [50000, 5000, 500];
     let width = 700;
     let height = 700;
     let n_threads = 4;
@@ -275,7 +277,7 @@ fn main() {
     // let zoom = 0.3;
     // let extent = Complex::from_floats(1.5, 1.5);
     let origin = Complex::from_floats(-1.25275, -0.343);
-    let zoom = 250.0;
+    let zoom = 350.0;
 
     let window_width = width;
     let window_height = height;
@@ -284,7 +286,7 @@ fn main() {
     let video_ctx = ctx.video().unwrap();
     let mut event_pump = ctx.event_pump().unwrap();
 
-    let window = video_ctx.window("", window_width, window_height)
+    let window = video_ctx.window("Warming Up...", window_width, window_height)
         .position_centered()
         .allow_highdpi()
         .opengl()
@@ -297,26 +299,30 @@ fn main() {
         renderer.create_texture_streaming(sdl2::pixels::PixelFormatEnum::RGB24,
                                       window_width,
                                       window_height)
-            .unwrap();
+        .unwrap();
 
     let (tx, rx) = channel();
 
     for _ in 0..n_threads {
         let tx = tx.clone();
-        thread::spawn(move || worker(tx, limit, width, height, origin, zoom));
+        thread::spawn(move || worker(tx, limits, width, height, origin, zoom));
     }
 
-    let mut buffer = vec![0u32; (width * height) as usize];
-    let mut display_buffer = vec![0u8; (width * height) as usize * 3];
-    let mut changed = true;
+    let mut buffer = vec![[0_u32; 3]; (width * height) as usize];
+    let mut display_buffer = vec![0_u8; (width * height) as usize * 3];
+    let mut changed = false;
+    let mut number_batches = 0;
     'all: loop {
         let mut count = 0;
         while let Ok(data) = rx.try_recv() {
             for (target, elem) in buffer.iter_mut().zip(data.iter()) {
-                *target += *elem;
+                target[0] += elem[0];
+                target[1] += elem[1];
+                target[2] += elem[2];
             }
             changed = true;
             count += 1;
+            number_batches += 1;
             if count > 10 {
                 break;
             }
@@ -329,6 +335,15 @@ fn main() {
                            &mut texture,
                            &mut display_buffer,
                            &buffer);
+            renderer.window_mut()
+                .unwrap()
+                .set_title(&format!("{} Batches in {} seconds",
+                                    number_batches,
+                                    time::SystemTime::now()
+                                    .duration_since(start_time)
+                                    .unwrap()
+                                    .as_secs()))
+                .unwrap();
         }
 
         for event in event_pump.poll_iter() {
