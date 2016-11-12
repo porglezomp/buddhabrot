@@ -1,6 +1,9 @@
 extern crate sdl2;
 extern crate image;
 extern crate rand;
+extern crate flate2;
+extern crate bincode;
+extern crate rustc_serialize;
 
 use std::time;
 use std::env;
@@ -8,6 +11,8 @@ use rand::{Rand, Rng};
 use rand::distributions::{Range, IndependentSample};
 use std::thread;
 use std::sync::mpsc::{Sender, channel};
+
+use bincode::rustc_serialize::encode_into;
 
 use sdl2::event::Event;
 use sdl2::render::{Texture, Renderer};
@@ -179,7 +184,7 @@ fn worker(tx: Sender<Box<[[u32; 3]]>>,
 
     loop {
         data = Buffer::new(width as u64, height as u64, origin, zoom);
-        for _ in 0..1000 {
+        for _ in 0..5000 {
             for &mut (ref mut c, ref mut contrib) in &mut samples {
                 for (i, &limit) in limits.iter().enumerate() {
                     evaluate(*c, limit, &mut current);
@@ -278,13 +283,14 @@ fn update_texture(width: u32, height: u32,
 
 fn main() {
     let start_time = time::SystemTime::now();
-    let limits = [50000, 5000, 500];
-    let width = 8192;
-    let height = 8192;
+    let limits = [10, 20, 100];
+    let width = 512;
+    let height = 512;
     let n_threads = 4;
     // let origin = Complex::from_floats(-0.1592, -1.0317);
-    let origin = Complex::from_floats(-0.3, 0.0);
-    let zoom = 0.3;
+    let origin = Complex::from_floats(-0.45, 0.0);
+    // let zoom = 0.45;
+    let zoom = 0.2;
     // let extent = Complex::from_floats(1.5, 1.5);
 
     // let origin = Complex::from_floats(-0.1592, -1.0317);
@@ -388,6 +394,25 @@ fn main() {
                    &buffer);
 
     if let Some(fname) = env::args().nth(1) {
-        image::save_buffer(fname, &image_buffer, width, height, image::RGB(8)).unwrap();
+        println!("Saving image...");
+        image::save_buffer(&fname, &image_buffer, width, height, image::RGB(8)).unwrap();
+
+        #[derive(RustcEncodable, RustcDecodable)]
+        struct RawBuf {
+            width: u32,
+            height: u32,
+            content: Vec<[u32; 3]>,
+        }
+
+        let buf = RawBuf {
+            width: width,
+            height: height,
+            content: buffer,
+        };
+
+        println!("Saving raw...");
+        let file = std::fs::File::create(&format!("{}.raw", fname)).unwrap();
+        let mut e = flate2::write::GzEncoder::new(file, flate2::Compression::Default);
+        encode_into(&buf, &mut e, bincode::SizeLimit::Infinite).unwrap();
     }
 }

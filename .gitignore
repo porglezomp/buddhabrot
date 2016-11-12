@@ -2,3 +2,5 @@ target
 *.png
 *.buffer
 *.bk
+*.raw
+*.gz
