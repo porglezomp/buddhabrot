@@ -2,14 +2,14 @@ use complex::Complex;
 
 pub struct Buffer {
     pub buffer: Box<[[u32; 3]]>,
-    pub width: u64,
-    pub height: u64,
+    pub width: u32,
+    pub height: u32,
     pub origin: Complex,
     pub zoom: f64,
 }
 
 impl Buffer {
-    pub fn new(width: u64, height: u64, origin: Complex, zoom: f64) -> Self {
+    pub fn new(width: u32, height: u32, origin: Complex, zoom: f64) -> Self {
         Buffer {
             buffer: vec![[0_u32; 3]; (width * height) as usize].into_boxed_slice(),
             width: width,
@@ -19,7 +19,7 @@ impl Buffer {
         }
     }
 
-    pub fn project(&self, point: Complex) -> (u64, u64) {
+    pub fn project(&self, point: Complex) -> (u32, u32) {
         let size = if self.width > self.height {
             self.height
         } else {
@@ -27,8 +27,8 @@ impl Buffer {
         };
         let aspect = self.width as f64 / self.height as f64;
         let offset = point - self.origin;
-        let x = ((offset.r * self.zoom + 0.5 * aspect) * size as f64) as u64;
-        let y = ((offset.i * self.zoom + 0.5) * size as f64) as u64;
+        let x = ((offset.r * self.zoom + 0.5 * aspect) * size as f64) as u32;
+        let y = ((offset.i * self.zoom + 0.5) * size as f64) as u32;
         (x, y)
     }
 

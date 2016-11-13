@@ -116,11 +116,11 @@ fn find_initial_sample(buf: &Buffer, origin: Complex, rad: f64, depth: u32) -> O
 fn build_initial_samples(buf: &Buffer, n_samples: u32) -> Vec<(Complex, f64)> {
     let iterations = 50000;
     let mut output = Vec::with_capacity(n_samples as usize);
-    let mut orbit = Vec::with_capacity(iterations);
+    let mut orbit = Vec::with_capacity(iterations as usize);
     for _ in 0..n_samples {
         match find_initial_sample(buf, Complex::default(), 2.0, 0) {
             Some(point) => {
-                evaluate(point, iterations as u32, &mut orbit);
+                evaluate(point, iterations, &mut orbit);
                 let steps = orbit.iter().filter(|&&x| buf.check(x)).count();
                 output.push((point, steps as f64 / iterations as f64));
             }
@@ -166,7 +166,7 @@ fn worker(tx: Sender<Box<[[u32; 3]]>>, config: &Config) {
     let mut rng = rand::thread_rng();
     let range = Range::new(0.0, 1.0);
 
-    let mut data = Buffer::new(config.width as u64, config.height as u64, config.origin, config.zoom);
+    let mut data = Buffer::new(config.width, config.height, config.origin, config.zoom);
     let mut samples = vec![(Complex::default(), 0.0)];
 
     if USE_METROPOLIS {
@@ -179,7 +179,7 @@ fn worker(tx: Sender<Box<[[u32; 3]]>>, config: &Config) {
     let mut proposed = Vec::with_capacity(max_limit as usize);
 
     loop {
-        data = Buffer::new(config.width as u64, config.height as u64, config.origin, config.zoom);
+        data = Buffer::new(config.width, config.height, config.origin, config.zoom);
         for _ in 0..config.batch_steps {
             for &mut (ref mut c, ref mut contrib) in &mut samples {
                 for (i, &limit) in config.limits.iter().enumerate() {
@@ -193,7 +193,8 @@ fn worker(tx: Sender<Box<[[u32; 3]]>>, config: &Config) {
                         }
                         let proposed_contrib = count as f64 / limit as f64;
 
-                        let alpha = accept_prob(limit, &current, *contrib, &proposed, proposed_contrib);
+                        let alpha =
+                            accept_prob(limit, &current, *contrib, &proposed, proposed_contrib);
                         if range.ind_sample(&mut rng) < alpha || !USE_METROPOLIS {
                             *c = c2;
                             *contrib = proposed_contrib;
@@ -213,12 +214,12 @@ fn worker(tx: Sender<Box<[[u32; 3]]>>, config: &Config) {
     }
 }
 
-fn update_texture(width: u32, height: u32,
-                  window_width: u32, window_height: u32,
-                  renderer: &mut Renderer,
-                  texture: &mut Texture,
-                  display_buffer: &mut [u8],
-                  buffer: &[[u32; 3]]) {
+fn color_map_buffer(width: u32,
+                    height: u32,
+                    window_width: u32,
+                    window_height: u32,
+                    in_buf: &[[u32; 3]],
+                    out_buf: &mut [u8]) {
     fn gain(x: f64, val: f64) -> u8 {
         fn clamp(x: f64) -> u8 {
             match x {
@@ -242,7 +243,7 @@ fn update_texture(width: u32, height: u32,
     let mut r_max = 0;
     let mut g_max = 0;
     let mut b_max = 0;
-    for pix in buffer {
+    for pix in in_buf {
         if pix[0] > r_max {
             r_max = pix[0];
         }
@@ -258,16 +259,34 @@ fn update_texture(width: u32, height: u32,
     let skip_y = (height / window_height) as usize;
 
     // Skip rows and columns in order to down-sample appropriately
-    let pix = buffer.chunks(width as usize * skip_y)
-        .flat_map(|part| part[..width as usize]
-                  .chunks(skip_x)
-                  .map(|x| x[0]));
+    let pix = in_buf.chunks(width as usize * skip_y)
+        .flat_map(|part| {
+            part[..width as usize]
+                .chunks(skip_x)
+                .map(|x| x[0])
+        });
 
-    for (target, elem) in display_buffer.chunks_mut(3).zip(pix) {
+    for (target, elem) in out_buf.chunks_mut(3).zip(pix) {
         target[0] = gain(elem[0] as f64 / r_max as f64, 0.2);
         target[1] = gain(elem[1] as f64 / g_max as f64, 0.2);
         target[2] = gain(elem[2] as f64 / b_max as f64, 0.2);
     }
+}
+
+fn update_texture(width: u32,
+                  height: u32,
+                  window_width: u32,
+                  window_height: u32,
+                  renderer: &mut Renderer,
+                  texture: &mut Texture,
+                  buffer: &[[u32; 3]],
+                  display_buffer: &mut [u8]) {
+    color_map_buffer(width,
+                     height,
+                     window_width,
+                     window_height,
+                     buffer,
+                     display_buffer);
 
     texture.update(None, &display_buffer, window_width as usize * 3).unwrap();
     texture.set_blend_mode(sdl2::render::BlendMode::Blend);
@@ -341,9 +360,9 @@ fn main() {
 
     let mut texture: Texture =
         renderer.create_texture_streaming(sdl2::pixels::PixelFormatEnum::RGB24,
-                                          config.window_width,
-                                          config.window_height)
-        .unwrap();
+                                      config.window_width,
+                                      config.window_height)
+            .unwrap();
 
     let (tx, rx) = channel();
 
@@ -380,20 +399,22 @@ fn main() {
 
         if changed {
             changed = false;
-            update_texture(config.width, config.height,
-                           config.window_width, config.window_height,
+            update_texture(config.width,
+                           config.height,
+                           config.window_width,
+                           config.window_height,
                            &mut renderer,
                            &mut texture,
-                           &mut display_buffer,
-                           &buffer);
+                           &buffer,
+                           &mut display_buffer);
             renderer.window_mut()
                 .unwrap()
                 .set_title(&format!("{} Batches in {} seconds",
                                     number_batches,
                                     time::SystemTime::now()
-                                    .duration_since(start_time)
-                                    .unwrap()
-                                    .as_secs()))
+                                        .duration_since(start_time)
+                                        .unwrap()
+                                        .as_secs()))
                 .unwrap();
         }
 
@@ -406,16 +427,21 @@ fn main() {
     }
 
     let mut image_buffer = vec![0_u8; (config.width * config.height) as usize * 3];
-    update_texture(config.width, config.height,
-                   config.width, config.height,
-                   &mut renderer,
-                   &mut texture,
-                   &mut image_buffer,
-                   &buffer);
+    color_map_buffer(config.width,
+                     config.height,
+                     config.width,
+                     config.height,
+                     &buffer,
+                     &mut image_buffer);
 
     if let Some(fname) = env::args().nth(1) {
         println!("Saving image...");
-        image::save_buffer(&fname, &image_buffer, config.width, config.height, image::RGB(8)).unwrap();
+        image::save_buffer(&fname,
+                           &image_buffer,
+                           config.width,
+                           config.height,
+                           image::RGB(8))
+            .unwrap();
 
         #[derive(RustcEncodable, RustcDecodable)]
         struct RawBuf {
