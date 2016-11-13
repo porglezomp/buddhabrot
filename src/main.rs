@@ -353,6 +353,32 @@ fn get_config() -> Config {
     }
 
     use toml::Value;
+    let keys = [
+        "use_metropolis",
+        "red_limit",
+        "green_limit",
+        "blue_limit",
+        "width",
+        "height",
+        "window_width",
+        "window_height",
+        "batch_steps",
+        "n_threads",
+        "warmup_count",
+        "max_batches",
+        "r",
+        "i",
+        "zoom",
+        "fname",
+        "save_raw",
+    ];
+
+    for key in conf.keys() {
+        if !keys.contains(&&key[..]) {
+            println!("Unrecognized key `{}` in config.", key);
+        }
+    }
+
     Config {
         use_metropolis: conf.get("use_metropolis").and_then(Value::as_bool).unwrap_or(true),
         limits: [
