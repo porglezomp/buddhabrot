@@ -1,0 +1,18 @@
+// let origin = Complex::from_floats(-0.1592, -1.0317);
+// let zoom = 80.5;
+
+// let origin = Complex::from_floats(-0.529854097, -0.667968575);
+// let zoom = 80.5;
+
+// let origin = Complex::from_floats(-0.657560793, 0.467732884);
+// let zoom = 70.5;
+
+// let origin = Complex::from_floats(-1.185768799, 0.302592593);
+// let zoom = 90.5;
+
+// let origin = Complex::from_floats(0.443108035, 0.345012263);
+// let zoom = 4000.0;
+
+// let origin = Complex::from_floats(-0.647663050, 0.380700837);
+// let zoom = 1275.0;
+

@@ -1,0 +1,16 @@
+red_limit = 50000
+green_limit = 5000
+blue_limit = 500
+width = 4096
+height = 4096
+window_width = 512
+window_height = 512
+batch_steps = 5000
+n_threads = 4
+warmup_count = 10
+max_batches = 4096
+r = -1.25275
+i = -0.343
+zoom = 350.0
+fname = "deep-zoom.png"
+save_raw = true

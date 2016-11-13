@@ -5,6 +5,7 @@ extern crate flate2;
 extern crate bincode;
 extern crate rustc_serialize;
 extern crate toml;
+extern crate num_cpus;
 
 use std::time;
 use std::env;
@@ -12,6 +13,8 @@ use rand::{Rand, Rng};
 use rand::distributions::{Range, IndependentSample};
 use std::thread;
 use std::sync::mpsc::{Sender, channel};
+use std::io::Read;
+use std::fs::File;
 
 use bincode::rustc_serialize::encode_into;
 
@@ -299,7 +302,7 @@ fn update_texture(width: u32,
     renderer.copy(texture, None, None).unwrap();
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 struct Config {
     limits: [u32; 3],
     width: u32,
@@ -312,42 +315,66 @@ struct Config {
     max_batches: Option<u32>,
     origin: Complex,
     zoom: f64,
+    fname: Option<String>,
+    save_raw: bool,
+}
+
+fn get_config() -> Config {
+    fn get_conf(path: &str) -> Result<toml::Table, ()> {
+        let mut text = String::new();
+        if let Ok(ref mut f) = File::open(path) {
+            if f.read_to_string(&mut text).is_err() {
+                return Err(());
+            }
+        } else {
+            return Err(());
+        }
+        toml::Parser::new(&text).parse().ok_or(())
+    }
+
+    let default = toml::Table::new();
+    let conf = if let Some(fname) = env::args().nth(1) {
+        get_conf(&fname).unwrap_or(default)
+    } else {
+        default
+    };
+
+    fn get_u32(table: &toml::Table, key: &str, val: u32) -> u32 {
+        table.get(key).and_then(Value::as_integer).unwrap_or(val as i64) as u32
+    }
+
+    fn get_f64(table: &toml::Table, key: &str, val: f64) -> f64 {
+        table.get(key).and_then(Value::as_float).unwrap_or(val)
+    }
+
+    use toml::Value;
+    Config {
+        limits: [
+            get_u32(&conf, "red_limit", 50000),
+            get_u32(&conf, "green_limit", 5000),
+            get_u32(&conf, "blue_limit", 500),
+        ],
+        width: get_u32(&conf, "width", 512),
+        height: get_u32(&conf, "height", 512),
+        window_width: get_u32(&conf, "window_width", 512),
+        window_height: get_u32(&conf, "window_height", 512),
+        batch_steps: get_u32(&conf, "batch_steps", 5000),
+        n_threads: get_u32(&conf, "n_threads", num_cpus::get() as u32),
+        warmup_count: get_u32(&conf, "warmup_count", 10),
+        max_batches: conf.get("max_batches").and_then(Value::as_integer).map(|x| x as u32),
+        origin: Complex::from_floats(
+            get_f64(&conf, "r", -0.4),
+            get_f64(&conf, "i", 0.0),
+        ),
+        zoom: get_f64(&conf, "zoom", 0.35),
+        fname: conf.get("fname").and_then(Value::as_str).map(String::from),
+        save_raw: conf.get("save_raw").and_then(Value::as_bool).unwrap_or(false),
+    }
 }
 
 fn main() {
     let start_time = time::SystemTime::now();
-    let config = Config {
-        limits: [50000, 5000, 500],
-        width: 512,
-        height: 512,
-        window_width: 512,
-        window_height: 512,
-        batch_steps: 5000,
-        n_threads: 4,
-        warmup_count: 10,
-        max_batches: None,
-        origin: Complex::from_floats(-0.4, 0.0),
-        zoom: 0.35,
-    };
-
-    // let extent = Complex::from_floats(1.5, 1.5);
-
-    // let origin = Complex::from_floats(-0.1592, -1.0317);
-    // let zoom = 80.5;
-    // let origin = Complex::from_floats(-0.529854097, -0.667968575);
-    // let zoom = 80.5;
-    // let origin = Complex::from_floats(-0.657560793, 0.467732884);
-    // let zoom = 70.5;
-    // let origin = Complex::from_floats(-1.185768799, 0.302592593);
-    // let zoom = 90.5;
-    // let origin = Complex::from_floats(0.443108035, 0.345012263);
-    // let zoom = 4000.0;
-    // let origin = Complex::from_floats(-0.647663050, 0.380700837);
-    // let zoom = 1275.0;
-
-    // let origin = Complex::from_floats(-1.25275, -0.343);
-    // let zoom = 350.0;
-
+    let config = get_config();
     let ctx = sdl2::init().unwrap();
     let video_ctx = ctx.video().unwrap();
     let mut event_pump = ctx.event_pump().unwrap();
@@ -371,6 +398,7 @@ fn main() {
 
     for _ in 0..config.n_threads {
         let tx = tx.clone();
+        let config = config.clone();
         thread::spawn(move || worker(tx, &config));
     }
 
@@ -428,15 +456,15 @@ fn main() {
         }
     }
 
-    let mut image_buffer = vec![0_u8; (config.width * config.height) as usize * 3];
-    color_map_buffer(config.width,
-                     config.height,
-                     config.width,
-                     config.height,
-                     &buffer,
-                     &mut image_buffer);
+    if let Some(fname) = config.fname {
+        let mut image_buffer = vec![0_u8; (config.width * config.height) as usize * 3];
+        color_map_buffer(config.width,
+                         config.height,
+                         config.width,
+                         config.height,
+                         &buffer,
+                         &mut image_buffer);
 
-    if let Some(fname) = env::args().nth(1) {
         println!("Saving image...");
         image::save_buffer(&fname,
                            &image_buffer,
@@ -445,22 +473,24 @@ fn main() {
                            image::RGB(8))
             .unwrap();
 
-        #[derive(RustcEncodable, RustcDecodable)]
-        struct RawBuf {
-            width: u32,
-            height: u32,
-            content: Vec<[u32; 3]>,
+        if config.save_raw {
+            #[derive(RustcEncodable, RustcDecodable)]
+            struct RawBuf {
+                width: u32,
+                height: u32,
+                content: Vec<[u32; 3]>,
+            }
+
+            let buf = RawBuf {
+                width: config.width,
+                height: config.height,
+                content: buffer,
+            };
+
+            println!("Saving raw...");
+            let file = std::fs::File::create(&format!("{}.raw", fname)).unwrap();
+            let mut e = flate2::write::GzEncoder::new(file, flate2::Compression::Default);
+            encode_into(&buf, &mut e, bincode::SizeLimit::Infinite).unwrap();
         }
-
-        let buf = RawBuf {
-            width: config.width,
-            height: config.height,
-            content: buffer,
-        };
-
-        println!("Saving raw...");
-        let file = std::fs::File::create(&format!("{}.raw", fname)).unwrap();
-        let mut e = flate2::write::GzEncoder::new(file, flate2::Compression::Default);
-        encode_into(&buf, &mut e, bincode::SizeLimit::Infinite).unwrap();
     }
 }
