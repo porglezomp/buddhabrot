@@ -8,24 +8,23 @@ extern crate toml;
 extern crate num_cpus;
 
 use std::time;
-use std::env;
 use rand::{Rand, Rng};
 use rand::distributions::{Range, IndependentSample};
 use std::thread;
 use std::sync::mpsc::{Sender, channel};
-use std::io::Read;
 use std::fs::File;
 
 use bincode::rustc_serialize::encode_into;
-
 use sdl2::event::Event;
 use sdl2::render::{Texture, Renderer};
 
 mod complex;
 mod buffer;
+mod config;
 
 use complex::Complex;
 use buffer::Buffer;
+use config::{get_config, Config};
 
 const USE_METROPOLIS: bool = true;
 
@@ -306,104 +305,6 @@ fn update_texture(width: u32,
     renderer.copy(texture, None, None).unwrap();
 }
 
-#[derive(Clone)]
-struct Config {
-    use_metropolis: bool,
-    limits: [u32; 3],
-    width: u32,
-    height: u32,
-    window_width: u32,
-    window_height: u32,
-    batch_steps: u32,
-    n_threads: u32,
-    warmup_count: u32,
-    max_batches: Option<u32>,
-    origin: Complex,
-    zoom: f64,
-    fname: Option<String>,
-    save_raw: bool,
-}
-
-fn get_config() -> Config {
-    fn get_conf(path: &str) -> Result<toml::Table, ()> {
-        let mut text = String::new();
-        if let Ok(ref mut f) = File::open(path) {
-            if f.read_to_string(&mut text).is_err() {
-                return Err(());
-            }
-        } else {
-            return Err(());
-        }
-        toml::Parser::new(&text).parse().ok_or(())
-    }
-
-    let default = toml::Table::new();
-    let conf = if let Some(fname) = env::args().nth(1) {
-        get_conf(&fname).unwrap_or(default)
-    } else {
-        default
-    };
-
-    fn get_u32(table: &toml::Table, key: &str, val: u32) -> u32 {
-        table.get(key).and_then(Value::as_integer).unwrap_or(val as i64) as u32
-    }
-
-    fn get_f64(table: &toml::Table, key: &str, val: f64) -> f64 {
-        table.get(key).and_then(Value::as_float).unwrap_or(val)
-    }
-
-    use toml::Value;
-    let keys = [
-        "use_metropolis",
-        "red_limit",
-        "green_limit",
-        "blue_limit",
-        "width",
-        "height",
-        "window_width",
-        "window_height",
-        "batch_steps",
-        "n_threads",
-        "warmup_count",
-        "max_batches",
-        "r",
-        "i",
-        "zoom",
-        "fname",
-        "save_raw",
-    ];
-
-    for key in conf.keys() {
-        if !keys.contains(&&key[..]) {
-            println!("Unrecognized key `{}` in config.", key);
-        }
-    }
-
-    Config {
-        use_metropolis: conf.get("use_metropolis").and_then(Value::as_bool).unwrap_or(true),
-        limits: [
-            get_u32(&conf, "red_limit", 50000),
-            get_u32(&conf, "green_limit", 5000),
-            get_u32(&conf, "blue_limit", 500),
-        ],
-        width: get_u32(&conf, "width", 512),
-        height: get_u32(&conf, "height", 512),
-        window_width: get_u32(&conf, "window_width", 512),
-        window_height: get_u32(&conf, "window_height", 512),
-        batch_steps: get_u32(&conf, "batch_steps", 5000),
-        n_threads: get_u32(&conf, "n_threads", num_cpus::get() as u32),
-        warmup_count: get_u32(&conf, "warmup_count", 10),
-        max_batches: conf.get("max_batches").and_then(Value::as_integer).map(|x| x as u32),
-        origin: Complex::from_floats(
-            get_f64(&conf, "r", -0.4),
-            get_f64(&conf, "i", 0.0),
-        ),
-        zoom: get_f64(&conf, "zoom", 0.35),
-        fname: conf.get("fname").and_then(Value::as_str).map(String::from),
-        save_raw: conf.get("save_raw").and_then(Value::as_bool).unwrap_or(false),
-    }
-}
-
 fn main() {
     let start_time = time::SystemTime::now();
     let config = get_config();
@@ -520,7 +421,7 @@ fn main() {
             };
 
             println!("Saving raw...");
-            let file = std::fs::File::create(&format!("{}.raw", fname)).unwrap();
+            let file = File::create(&format!("{}.raw", fname)).unwrap();
             let mut e = flate2::write::GzEncoder::new(file, flate2::Compression::Default);
             encode_into(&buf, &mut e, bincode::SizeLimit::Infinite).unwrap();
         }
