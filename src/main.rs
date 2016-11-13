@@ -4,6 +4,7 @@ extern crate rand;
 extern crate flate2;
 extern crate bincode;
 extern crate rustc_serialize;
+extern crate toml;
 
 use std::time;
 use std::env;
@@ -161,32 +162,27 @@ fn warmup(buf: &Buffer, samples: &mut Vec<(Complex, f64)>) {
     }
 }
 
-fn worker(tx: Sender<Box<[[u32; 3]]>>,
-          limits: [u32; 3],
-          width: u32,
-          height: u32,
-          origin: Complex,
-          zoom: f64) {
+fn worker(tx: Sender<Box<[[u32; 3]]>>, config: &Config) {
     let mut rng = rand::thread_rng();
     let range = Range::new(0.0, 1.0);
 
-    let mut data = Buffer::new(width as u64, height as u64, origin, zoom);
+    let mut data = Buffer::new(config.width as u64, config.height as u64, config.origin, config.zoom);
     let mut samples = vec![(Complex::default(), 0.0)];
 
     if USE_METROPOLIS {
-        samples = build_initial_samples(&data, 30);
+        samples = build_initial_samples(&data, config.warmup_count);
         warmup(&data, &mut samples);
     }
 
-    let max_limit = limits.iter().max().cloned().unwrap();
+    let max_limit = config.limits.iter().max().cloned().unwrap();
     let mut current = Vec::with_capacity(max_limit as usize);
     let mut proposed = Vec::with_capacity(max_limit as usize);
 
     loop {
-        data = Buffer::new(width as u64, height as u64, origin, zoom);
-        for _ in 0..5000 {
+        data = Buffer::new(config.width as u64, config.height as u64, config.origin, config.zoom);
+        for _ in 0..config.batch_steps {
             for &mut (ref mut c, ref mut contrib) in &mut samples {
-                for (i, &limit) in limits.iter().enumerate() {
+                for (i, &limit) in config.limits.iter().enumerate() {
                     evaluate(*c, limit, &mut current);
                     let c2 = mutate(*c, data.zoom);
 
@@ -281,16 +277,37 @@ fn update_texture(width: u32, height: u32,
     renderer.copy(&texture, None, None).unwrap();
 }
 
+#[derive(Clone, Copy)]
+struct Config {
+    limits: [u32; 3],
+    width: u32,
+    height: u32,
+    window_width: u32,
+    window_height: u32,
+    batch_steps: u32,
+    n_threads: u32,
+    warmup_count: u32,
+    max_batches: Option<u32>,
+    origin: Complex,
+    zoom: f64,
+}
+
 fn main() {
     let start_time = time::SystemTime::now();
-    let limits = [10, 20, 100];
-    let width = 512;
-    let height = 512;
-    let n_threads = 4;
-    // let origin = Complex::from_floats(-0.1592, -1.0317);
-    let origin = Complex::from_floats(-0.45, 0.0);
-    // let zoom = 0.45;
-    let zoom = 0.2;
+    let config = Config {
+        limits: [50000, 5000, 500],
+        width: 512,
+        height: 512,
+        window_width: 512,
+        window_height: 512,
+        batch_steps: 5000,
+        n_threads: 4,
+        warmup_count: 30,
+        max_batches: None,
+        origin: Complex::from_floats(-0.45, 0.0),
+        zoom: 0.3,
+    };
+
     // let extent = Complex::from_floats(1.5, 1.5);
 
     // let origin = Complex::from_floats(-0.1592, -1.0317);
@@ -309,14 +326,11 @@ fn main() {
     // let origin = Complex::from_floats(-1.25275, -0.343);
     // let zoom = 350.0;
 
-    let window_width = 512;
-    let window_height = 512;
-
     let ctx = sdl2::init().unwrap();
     let video_ctx = ctx.video().unwrap();
     let mut event_pump = ctx.event_pump().unwrap();
 
-    let window = video_ctx.window("Warming Up...", window_width, window_height)
+    let window = video_ctx.window("Warming Up...", config.window_width, config.window_height)
         .position_centered()
         .allow_highdpi()
         .opengl()
@@ -327,19 +341,19 @@ fn main() {
 
     let mut texture: Texture =
         renderer.create_texture_streaming(sdl2::pixels::PixelFormatEnum::RGB24,
-                                      window_width,
-                                      window_height)
+                                          config.window_width,
+                                          config.window_height)
         .unwrap();
 
     let (tx, rx) = channel();
 
-    for _ in 0..n_threads {
+    for _ in 0..config.n_threads {
         let tx = tx.clone();
-        thread::spawn(move || worker(tx, limits, width, height, origin, zoom));
+        thread::spawn(move || worker(tx, &config));
     }
 
-    let mut buffer = vec![[0_u32; 3]; (width * height) as usize];
-    let mut display_buffer = vec![0_u8; (window_width * window_height) as usize * 3];
+    let mut buffer = vec![[0_u32; 3]; (config.width * config.height) as usize];
+    let mut display_buffer = vec![0_u8; (config.window_width * config.window_height) as usize * 3];
     let mut changed = false;
     let mut number_batches = 0;
     'all: loop {
@@ -358,10 +372,16 @@ fn main() {
             }
         }
 
+        if let Some(max_count) = config.max_batches {
+            if number_batches >= max_count {
+                break 'all;
+            }
+        }
+
         if changed {
             changed = false;
-            update_texture(width, height,
-                           window_width, window_height,
+            update_texture(config.width, config.height,
+                           config.window_width, config.window_height,
                            &mut renderer,
                            &mut texture,
                            &mut display_buffer,
@@ -385,9 +405,9 @@ fn main() {
         }
     }
 
-    let mut image_buffer = vec![0_u8; (width * height) as usize * 3];
-    update_texture(width, height,
-                   width, height,
+    let mut image_buffer = vec![0_u8; (config.width * config.height) as usize * 3];
+    update_texture(config.width, config.height,
+                   config.width, config.height,
                    &mut renderer,
                    &mut texture,
                    &mut image_buffer,
@@ -395,7 +415,7 @@ fn main() {
 
     if let Some(fname) = env::args().nth(1) {
         println!("Saving image...");
-        image::save_buffer(&fname, &image_buffer, width, height, image::RGB(8)).unwrap();
+        image::save_buffer(&fname, &image_buffer, config.width, config.height, image::RGB(8)).unwrap();
 
         #[derive(RustcEncodable, RustcDecodable)]
         struct RawBuf {
@@ -405,8 +425,8 @@ fn main() {
         }
 
         let buf = RawBuf {
-            width: width,
-            height: height,
+            width: config.width,
+            height: config.height,
             content: buffer,
         };
 

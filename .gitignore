@@ -4,3 +4,4 @@ target
 *.bk
 *.raw
 *.gz
+.DS_Store
