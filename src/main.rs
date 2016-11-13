@@ -60,20 +60,20 @@ fn evaluate(c: Complex, iterations: u32, orbit: &mut Vec<Complex>) -> Option<u32
 }
 
 fn accept_prob(length: u32,
-               current: &Vec<Complex>,
+               current: &[Complex],
                cur_contrib: f64,
-               proposed: &Vec<Complex>,
+               proposed: &[Complex],
                prop_contrib: f64)
                -> f64 {
 
-    fn transition_prob(length: f64, from: &Vec<Complex>, to: &Vec<Complex>) -> f64 {
+    fn transition_prob(length: f64, from: &[Complex], to: &[Complex]) -> f64 {
         (1.0 - (length - from.len() as f64) / length) / (1.0 - (length - to.len() as f64) / length)
     }
 
     // Tx = p(x' -> x)
-    let t0 = transition_prob(length as f64, &proposed, &current);
+    let t0 = transition_prob(length as f64, proposed, current);
     // Tx' = p(x -> x')
-    let t1 = transition_prob(length as f64, &current, &proposed);
+    let t1 = transition_prob(length as f64, current, proposed);
 
     // (Fx' * Tx') / (Fx * Tx)
     ((cur_contrib * t0) / (prop_contrib * t1)).min(1.0)
@@ -92,7 +92,7 @@ fn find_initial_sample(buf: &Buffer, origin: Complex, rad: f64, depth: u32) -> O
     let mut orbit = Vec::with_capacity(50000);
     for _ in 0..200 {
         let tmp = Complex::rand(&mut rng) * (rad * 0.5) + origin;
-        if let None = evaluate(tmp, 50000, &mut orbit) {
+        if evaluate(tmp, 50000, &mut orbit).is_none() {
             continue;
         }
 
@@ -145,7 +145,7 @@ fn warmup(buf: &Buffer, samples: &mut Vec<(Complex, f64)>) {
             evaluate(*c, limit, &mut current);
             let c2 = mutate(*c, buf.zoom);
 
-            if let Some(_) = evaluate(c2, limit, &mut proposed) {
+            if evaluate(c2, limit, &mut proposed).is_some() {
                 let count = proposed.iter().filter(|x| buf.check(**x)).count();
                 if count == 0 {
                     continue;
@@ -186,7 +186,7 @@ fn worker(tx: Sender<Box<[[u32; 3]]>>, config: &Config) {
                     evaluate(*c, limit, &mut current);
                     let c2 = mutate(*c, data.zoom);
 
-                    if let Some(_) = evaluate(c2, limit, &mut proposed) {
+                    if evaluate(c2, limit, &mut proposed).is_some() {
                         let count = proposed.iter().filter(|x| data.check(**x)).count();
                         if count == 0 {
                             continue;
@@ -288,12 +288,12 @@ fn update_texture(width: u32,
                      buffer,
                      display_buffer);
 
-    texture.update(None, &display_buffer, window_width as usize * 3).unwrap();
+    texture.update(None, display_buffer, window_width as usize * 3).unwrap();
     texture.set_blend_mode(sdl2::render::BlendMode::Blend);
     texture.set_alpha_mod(255);
-    renderer.copy(&texture, None, None).unwrap();
+    renderer.copy(texture, None, None).unwrap();
     renderer.present();
-    renderer.copy(&texture, None, None).unwrap();
+    renderer.copy(texture, None, None).unwrap();
 }
 
 #[derive(Clone, Copy)]
@@ -419,9 +419,8 @@ fn main() {
         }
 
         for event in event_pump.poll_iter() {
-            match event {
-                Event::Quit { .. } => break 'all,
-                _ => (),
+            if let Event::Quit { .. } =  event {
+                break 'all;
             }
         }
     }
