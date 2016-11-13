@@ -37,7 +37,7 @@ fn mutate(value: Complex, zoom: f64) -> Complex {
     let unit = Range::new(0.0, 1.0);
     let x = rng.gen::<u32>() % 5;
 
-    if x == 0 || !USE_METROPOLIS {
+    if x == 0 {
         Complex::rand(&mut rand::thread_rng())
     } else {
         let r1 = 0.0001 / zoom;
@@ -191,7 +191,11 @@ fn worker(tx: Sender<Box<[[u32; 3]]>>, config: &Config) {
             let mapping = samples.iter_mut().flat_map(|x| x.iter_mut().zip(config.limits.iter().enumerate()));
             for (&mut (ref mut c, ref mut contrib), (i, &limit)) in mapping {
                 evaluate(*c, limit, &mut current);
-                let c2 = mutate(*c, data.zoom);
+                let c2 = if config.use_metropolis {
+                    mutate(*c, data.zoom)
+                } else {
+                    Complex::rand(&mut rng)
+                };
 
                 if evaluate(c2, limit, &mut proposed).is_some() {
                     let count = proposed.iter().filter(|x| data.check(**x)).count();
@@ -202,7 +206,7 @@ fn worker(tx: Sender<Box<[[u32; 3]]>>, config: &Config) {
 
                     let alpha =
                         accept_prob(limit, &current, *contrib, &proposed, proposed_contrib);
-                    if range.ind_sample(&mut rng) < alpha || !USE_METROPOLIS {
+                    if  !config.use_metropolis || range.ind_sample(&mut rng) < alpha {
                         *c = c2;
                         *contrib = proposed_contrib;
                         for &point in current.iter().skip(1) {
@@ -304,6 +308,7 @@ fn update_texture(width: u32,
 
 #[derive(Clone)]
 struct Config {
+    use_metropolis: bool,
     limits: [u32; 3],
     width: u32,
     height: u32,
@@ -349,6 +354,7 @@ fn get_config() -> Config {
 
     use toml::Value;
     Config {
+        use_metropolis: conf.get("use_metropolis").and_then(Value::as_bool).unwrap_or(true),
         limits: [
             get_u32(&conf, "red_limit", 50000),
             get_u32(&conf, "green_limit", 5000),

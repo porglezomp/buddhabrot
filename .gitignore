@@ -5,3 +5,4 @@ target
 *.raw
 *.gz
 .DS_Store
+*.swp
