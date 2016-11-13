@@ -113,35 +113,39 @@ fn find_initial_sample(buf: &Buffer, origin: Complex, rad: f64, depth: u32) -> O
     find_initial_sample(buf, seed, rad / 2.0, depth + 1)
 }
 
-fn build_initial_samples(buf: &Buffer, n_samples: u32) -> Vec<(Complex, f64)> {
+fn build_initial_samples(buf: &Buffer, n_samples: u32) -> Vec<[(Complex, f64); 3]> {
     let iterations = 50000;
     let mut output = Vec::with_capacity(n_samples as usize);
     let mut orbit = Vec::with_capacity(iterations as usize);
     for _ in 0..n_samples {
-        match find_initial_sample(buf, Complex::default(), 2.0, 0) {
-            Some(point) => {
-                evaluate(point, iterations, &mut orbit);
-                let steps = orbit.iter().filter(|&&x| buf.check(x)).count();
-                output.push((point, steps as f64 / iterations as f64));
-            }
-            None => {
-                println!("Failed to find an initial sample");
-                continue;
+        let mut value = [(Complex::default(), 0.0); 3];
+        for i in 0..3 {
+            match find_initial_sample(buf, Complex::default(), 2.0, 0) {
+                Some(point) => {
+                    evaluate(point, iterations, &mut orbit);
+                    let steps = orbit.iter().filter(|&&x| buf.check(x)).count();
+                    value[i] = (point, steps as f64 / iterations as f64);
+                }
+                None => {
+                    println!("Failed to find an initial sample");
+                    continue;
+                }
             }
         }
+        output.push(value);
     }
     output
 }
 
-fn warmup(buf: &Buffer, samples: &mut Vec<(Complex, f64)>) {
+fn warmup(buf: &Buffer, samples: &mut [[(Complex, f64); 3]]) {
     let limit = 50000;
     let range = Range::new(0.0, 1.0);
     let mut rng = rand::thread_rng();
 
     let mut current = Vec::with_capacity(limit as usize);
     let mut proposed = Vec::with_capacity(limit as usize);
-    for _ in 0..10000 {
-        for &mut (ref mut c, ref mut contrib) in samples.iter_mut() {
+    for &mut (ref mut c, ref mut contrib) in samples.iter_mut().flat_map(|x| x.iter_mut()) {
+        for _ in 0..10000 {
             evaluate(*c, limit, &mut current);
             let c2 = mutate(*c, buf.zoom);
 
@@ -167,7 +171,7 @@ fn worker(tx: Sender<Box<[[u32; 3]]>>, config: &Config) {
     let range = Range::new(0.0, 1.0);
 
     let mut data = Buffer::new(config.width, config.height, config.origin, config.zoom);
-    let mut samples = vec![(Complex::default(), 0.0)];
+    let mut samples = vec![[(Complex::default(), 0.0); 3]];
 
     if USE_METROPOLIS {
         samples = build_initial_samples(&data, config.warmup_count);
@@ -181,26 +185,25 @@ fn worker(tx: Sender<Box<[[u32; 3]]>>, config: &Config) {
     loop {
         data = Buffer::new(config.width, config.height, config.origin, config.zoom);
         for _ in 0..config.batch_steps {
-            for &mut (ref mut c, ref mut contrib) in &mut samples {
-                for (i, &limit) in config.limits.iter().enumerate() {
-                    evaluate(*c, limit, &mut current);
-                    let c2 = mutate(*c, data.zoom);
+            let mapping = samples.iter_mut().flat_map(|x| x.iter_mut().zip(config.limits.iter().enumerate()));
+            for (&mut (ref mut c, ref mut contrib), (i, &limit)) in mapping {
+                evaluate(*c, limit, &mut current);
+                let c2 = mutate(*c, data.zoom);
 
-                    if evaluate(c2, limit, &mut proposed).is_some() {
-                        let count = proposed.iter().filter(|x| data.check(**x)).count();
-                        if count == 0 {
-                            continue;
-                        }
-                        let proposed_contrib = count as f64 / limit as f64;
+                if evaluate(c2, limit, &mut proposed).is_some() {
+                    let count = proposed.iter().filter(|x| data.check(**x)).count();
+                    if count == 0 {
+                        continue;
+                    }
+                    let proposed_contrib = count as f64 / limit as f64;
 
-                        let alpha =
-                            accept_prob(limit, &current, *contrib, &proposed, proposed_contrib);
-                        if range.ind_sample(&mut rng) < alpha || !USE_METROPOLIS {
-                            *c = c2;
-                            *contrib = proposed_contrib;
-                            for &point in &current {
-                                data.increment(i, point);
-                            }
+                    let alpha =
+                        accept_prob(limit, &current, *contrib, &proposed, proposed_contrib);
+                    if range.ind_sample(&mut rng) < alpha || !USE_METROPOLIS {
+                        *c = c2;
+                        *contrib = proposed_contrib;
+                        for &point in current.iter().skip(1) {
+                            data.increment(i, point);
                         }
                     }
                 }
@@ -321,10 +324,10 @@ fn main() {
         window_height: 512,
         batch_steps: 5000,
         n_threads: 4,
-        warmup_count: 30,
+        warmup_count: 10,
         max_batches: None,
-        origin: Complex::from_floats(-0.45, 0.0),
-        zoom: 0.3,
+        origin: Complex::from_floats(-0.4, 0.0),
+        zoom: 0.35,
     };
 
     // let extent = Complex::from_floats(1.5, 1.5);
