@@ -1,0 +1,17 @@
+use_metropolis = true
+red_limit = 50000
+green_limit = 5000
+blue_limit = 500
+width = 1024
+height = 1024
+window_width = 512
+window_height = 512
+batch_steps = 5000
+# n_threads = 4
+warmup_count = 10
+max_batches = 1024
+r = 0.0
+i = 0.0
+zoom = 0.24
+fname = "sticker.png"
+save_raw = false

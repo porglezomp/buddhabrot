@@ -120,13 +120,13 @@ fn build_initial_samples(buf: &Buffer, n_samples: u32) -> Vec<[(Complex, f64); 3
     let mut output = Vec::with_capacity(n_samples as usize);
     let mut orbit = Vec::with_capacity(iterations as usize);
     for _ in 0..n_samples {
-        let mut value = [(Complex::default(), 0.0); 3];
-        for i in 0..3 {
+        let mut values = [(Complex::default(), 0.0); 3];
+        for value in values.iter_mut() {
             match find_initial_sample(buf, Complex::default(), 2.0, 0) {
                 Some(point) => {
                     evaluate(point, iterations, &mut orbit);
                     let steps = orbit.iter().filter(|&&x| buf.check(x)).count();
-                    value[i] = (point, steps as f64 / iterations as f64);
+                    *value = (point, steps as f64 / iterations as f64);
                 }
                 None => {
                     println!("Failed to find an initial sample");
@@ -134,7 +134,7 @@ fn build_initial_samples(buf: &Buffer, n_samples: u32) -> Vec<[(Complex, f64); 3
                 }
             }
         }
-        output.push(value);
+        output.push(values);
     }
     output
 }
