@@ -77,3 +77,23 @@ impl Sub for Complex {
         }
     }
 }
+
+impl Add<f64> for Complex {
+    type Output = Complex;
+    fn add(self, other: f64) -> Complex {
+        Complex {
+            r: self.r + other,
+            i: self.i,
+        }
+    }
+}
+
+impl Sub<f64> for Complex {
+    type Output = Complex;
+    fn sub(self, other: f64) -> Complex {
+        Complex {
+            r: self.r - other,
+            i: self.i,
+        }
+    }
+}
