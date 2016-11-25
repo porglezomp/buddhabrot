@@ -40,7 +40,13 @@ pub fn get_config() -> Config {
 
     let default = toml::Table::new();
     let conf = if let Some(fname) = env::args().nth(1) {
-        get_conf(&fname).unwrap_or(default)
+        match get_conf(&fname) {
+            Ok(conf) => conf,
+            Err(()) => {
+                println!("Error attempting to read config '{}'", fname);
+                default
+            }
+        }
     } else {
         default
     };
