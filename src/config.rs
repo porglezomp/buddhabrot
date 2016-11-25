@@ -86,6 +86,21 @@ pub fn get_config() -> Config {
         }
     }
 
+    let width = get_u32(&conf, "width", 512);
+    let height = get_u32(&conf, "height", 512);
+    let mut window_width = get_u32(&conf, "window_width", 512);
+    let mut window_height = get_u32(&conf, "window_height", 512);
+
+    if window_width > width {
+        println!("Warning: decreased window width to fit image width. Requested {}, using {}.", window_width, width);
+        window_width = width;
+    }
+
+    if window_height > height {
+        println!("Warning: decreased window height to fit image height. Requested {}, using {}.", window_height, height);
+        window_height = height;
+    }
+
     Config {
         use_metropolis: conf.get("use_metropolis").and_then(Value::as_bool).unwrap_or(true),
         limits: [
@@ -93,10 +108,10 @@ pub fn get_config() -> Config {
             get_u32(&conf, "green_limit", 5000),
             get_u32(&conf, "blue_limit", 500),
         ],
-        width: get_u32(&conf, "width", 512),
-        height: get_u32(&conf, "height", 512),
-        window_width: get_u32(&conf, "window_width", 512),
-        window_height: get_u32(&conf, "window_height", 512),
+        width: width,
+        height: height,
+        window_width: window_width,
+        window_height: window_height,
         batch_steps: get_u32(&conf, "batch_steps", 5000),
         n_threads: get_u32(&conf, "n_threads", num_cpus::get() as u32),
         warmup_count: get_u32(&conf, "warmup_count", 10),
