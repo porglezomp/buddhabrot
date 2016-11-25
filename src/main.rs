@@ -26,8 +26,6 @@ use complex::Complex;
 use buffer::Buffer;
 use config::{get_config, Config};
 
-const USE_METROPOLIS: bool = true;
-
 
 fn mutate(value: Complex, zoom: f64) -> Complex {
     let mut rng = rand::thread_rng();
@@ -175,7 +173,7 @@ fn worker(tx: Sender<Box<[[u32; 3]]>>, config: &Config) {
     let mut data = Buffer::new(config.width, config.height, config.origin, config.zoom);
     let mut samples = vec![[(Complex::default(), 0.0); 3]];
 
-    if USE_METROPOLIS {
+    if config.use_metropolis {
         samples = build_initial_samples(&data, config.warmup_count);
         warmup(&data, &mut samples);
     }
