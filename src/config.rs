@@ -52,7 +52,10 @@ pub fn get_config() -> Config {
     };
 
     fn get_u32(table: &toml::Table, key: &str, val: u32) -> u32 {
-        table.get(key).and_then(Value::as_integer).unwrap_or(val as i64) as u32
+        table
+            .get(key)
+            .and_then(Value::as_integer)
+            .unwrap_or(val as i64) as u32
     }
 
     fn get_f64(table: &toml::Table, key: &str, val: f64) -> f64 {
@@ -92,17 +95,27 @@ pub fn get_config() -> Config {
     let mut window_height = get_u32(&conf, "window_height", 512);
 
     if window_width > width {
-        println!("Warning: decreased window width to fit image width. Requested {}, using {}.", window_width, width);
+        println!(
+            "Warning: decreased window width to fit image width. Requested {}, using {}.",
+            window_width,
+            width
+        );
         window_width = width;
     }
 
     if window_height > height {
-        println!("Warning: decreased window height to fit image height. Requested {}, using {}.", window_height, height);
+        println!(
+            "Warning: decreased window height to fit image height. Requested {}, using {}.",
+            window_height,
+            height
+        );
         window_height = height;
     }
 
     Config {
-        use_metropolis: conf.get("use_metropolis").and_then(Value::as_bool).unwrap_or(true),
+        use_metropolis: conf.get("use_metropolis")
+            .and_then(Value::as_bool)
+            .unwrap_or(true),
         limits: [
             get_u32(&conf, "red_limit", 50000),
             get_u32(&conf, "green_limit", 5000),
@@ -115,13 +128,14 @@ pub fn get_config() -> Config {
         batch_steps: get_u32(&conf, "batch_steps", 5000),
         n_threads: get_u32(&conf, "n_threads", num_cpus::get() as u32),
         warmup_count: get_u32(&conf, "warmup_count", 10),
-        max_batches: conf.get("max_batches").and_then(Value::as_integer).map(|x| x as u32),
-        origin: Complex::from_floats(
-            get_f64(&conf, "r", -0.4),
-            get_f64(&conf, "i", 0.0),
-        ),
+        max_batches: conf.get("max_batches")
+            .and_then(Value::as_integer)
+            .map(|x| x as u32),
+        origin: Complex::from_floats(get_f64(&conf, "r", -0.4), get_f64(&conf, "i", 0.0)),
         zoom: get_f64(&conf, "zoom", 0.35),
         fname: conf.get("fname").and_then(Value::as_str).map(String::from),
-        save_raw: conf.get("save_raw").and_then(Value::as_bool).unwrap_or(false),
+        save_raw: conf.get("save_raw")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
     }
 }

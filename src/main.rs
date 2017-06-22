@@ -59,12 +59,13 @@ fn evaluate(c: Complex, iterations: u32, orbit: &mut Vec<Complex>) -> Option<u32
     None
 }
 
-fn accept_prob(length: u32,
-               current: &[Complex],
-               cur_contrib: f64,
-               proposed: &[Complex],
-               prop_contrib: f64)
-               -> f64 {
+fn accept_prob(
+    length: u32,
+    current: &[Complex],
+    cur_contrib: f64,
+    proposed: &[Complex],
+    prop_contrib: f64,
+) -> f64 {
 
     fn transition_prob(length: f64, from: &[Complex], to: &[Complex]) -> f64 {
         (1.0 - (length - from.len() as f64) / length) / (1.0 - (length - to.len() as f64) / length)
@@ -119,7 +120,7 @@ fn build_initial_samples(buf: &Buffer, n_samples: u32) -> Vec<[(Complex, f64); 3
     let mut orbit = Vec::with_capacity(iterations as usize);
     for _ in 0..n_samples {
         let mut values = [(Complex::default(), 0.0); 3];
-        for value in values.iter_mut() {
+        for value in &mut values {
             match find_initial_sample(buf, Complex::default(), 2.0, 0) {
                 Some(point) => {
                     evaluate(point, iterations, &mut orbit);
@@ -166,7 +167,7 @@ fn warmup(buf: &Buffer, samples: &mut [[(Complex, f64); 3]]) {
     }
 }
 
-fn worker(tx: Sender<Box<[[u32; 3]]>>, config: &Config) {
+fn worker(tx: &Sender<Box<[[u32; 3]]>>, config: &Config) {
     let mut rng = rand::thread_rng();
     let range = Range::new(0.0, 1.0);
 
@@ -185,7 +186,9 @@ fn worker(tx: Sender<Box<[[u32; 3]]>>, config: &Config) {
     loop {
         data = Buffer::new(config.width, config.height, config.origin, config.zoom);
         for _ in 0..config.batch_steps {
-            let mapping = samples.iter_mut().flat_map(|x| x.iter_mut().zip(config.limits.iter().enumerate()));
+            let mapping = samples
+                .iter_mut()
+                .flat_map(|x| x.iter_mut().zip(config.limits.iter().enumerate()));
             for (&mut (ref mut c, ref mut contrib), (i, &limit)) in mapping {
                 evaluate(*c, limit, &mut current);
                 let c2 = if config.use_metropolis {
@@ -201,9 +204,8 @@ fn worker(tx: Sender<Box<[[u32; 3]]>>, config: &Config) {
                     }
                     let proposed_contrib = count as f64 / limit as f64;
 
-                    let alpha =
-                        accept_prob(limit, &current, *contrib, &proposed, proposed_contrib);
-                    if  !config.use_metropolis || range.ind_sample(&mut rng) < alpha {
+                    let alpha = accept_prob(limit, &current, *contrib, &proposed, proposed_contrib);
+                    if !config.use_metropolis || range.ind_sample(&mut rng) < alpha {
                         *c = c2;
                         *contrib = proposed_contrib;
                         for &point in current.iter().skip(1) {
@@ -221,12 +223,14 @@ fn worker(tx: Sender<Box<[[u32; 3]]>>, config: &Config) {
     }
 }
 
-fn color_map_buffer(width: u32,
-                    height: u32,
-                    window_width: u32,
-                    window_height: u32,
-                    in_buf: &[[u32; 3]],
-                    out_buf: &mut [u8]) {
+fn color_map_buffer(
+    width: u32,
+    height: u32,
+    window_width: u32,
+    window_height: u32,
+    in_buf: &[[u32; 3]],
+    out_buf: &mut [u8],
+) {
     fn gain(x: f64, val: f64) -> u8 {
         fn clamp(x: f64) -> u8 {
             match x {
@@ -240,11 +244,13 @@ fn color_map_buffer(width: u32,
             if val > 0.0 { x.powf(val.log(0.5)) } else { 0.0 }
         }
 
-        clamp(if x < 0.5 {
-            bias(2.0 * x, 1.0 - val)
-        } else {
-            2.0 - bias(2.0 - 2.0 * x, 1.0 - val)
-        } * 256.0)
+        clamp(
+            if x < 0.5 {
+                bias(2.0 * x, 1.0 - val)
+            } else {
+                2.0 - bias(2.0 - 2.0 * x, 1.0 - val)
+            } * 256.0,
+        )
     }
 
     let mut r_max = 0;
@@ -266,12 +272,9 @@ fn color_map_buffer(width: u32,
     let skip_y = (height / window_height) as usize;
 
     // Skip rows and columns in order to down-sample appropriately
-    let pix = in_buf.chunks(width as usize * skip_y)
-        .flat_map(|part| {
-            part[..width as usize]
-                .chunks(skip_x)
-                .map(|x| x[0])
-        });
+    let pix = in_buf
+        .chunks(width as usize * skip_y)
+        .flat_map(|part| part[..width as usize].chunks(skip_x).map(|x| x[0]));
 
     for (target, elem) in out_buf.chunks_mut(3).zip(pix) {
         target[0] = gain(elem[0] as f64 / r_max as f64, 0.2);
@@ -280,22 +283,26 @@ fn color_map_buffer(width: u32,
     }
 }
 
-fn update_texture(width: u32,
-                  height: u32,
-                  window_width: u32,
-                  window_height: u32,
-                  renderer: &mut Renderer,
-                  texture: &mut Texture,
-                  buffer: &[[u32; 3]],
-                  display_buffer: &mut [u8]) {
-    color_map_buffer(width,
-                     height,
-                     window_width,
-                     window_height,
-                     buffer,
-                     display_buffer);
+fn update_texture(
+    (width, height): (u32, u32),
+    (window_width, window_height): (u32, u32),
+    renderer: &mut Renderer,
+    texture: &mut Texture,
+    buffer: &[[u32; 3]],
+    display_buffer: &mut [u8],
+) {
+    color_map_buffer(
+        width,
+        height,
+        window_width,
+        window_height,
+        buffer,
+        display_buffer,
+    );
 
-    texture.update(None, display_buffer, window_width as usize * 3).unwrap();
+    texture
+        .update(None, display_buffer, window_width as usize * 3)
+        .unwrap();
     texture.set_blend_mode(sdl2::render::BlendMode::Blend);
     texture.set_alpha_mod(255);
     renderer.copy(texture, None, None).unwrap();
@@ -310,7 +317,8 @@ fn main() {
     let video_ctx = ctx.video().unwrap();
     let mut event_pump = ctx.event_pump().unwrap();
 
-    let window = video_ctx.window("Warming Up...", config.window_width, config.window_height)
+    let window = video_ctx
+        .window("Warming Up...", config.window_width, config.window_height)
         .position_centered()
         .allow_highdpi()
         .opengl()
@@ -319,18 +327,20 @@ fn main() {
 
     let mut renderer: Renderer = window.renderer().build().unwrap();
 
-    let mut texture: Texture =
-        renderer.create_texture_streaming(sdl2::pixels::PixelFormatEnum::RGB24,
-                                      config.window_width,
-                                      config.window_height)
-            .unwrap();
+    let mut texture: Texture = renderer
+        .create_texture_streaming(
+            sdl2::pixels::PixelFormatEnum::RGB24,
+            config.window_width,
+            config.window_height,
+        )
+        .unwrap();
 
     let (tx, rx) = channel();
 
     for _ in 0..config.n_threads {
         let tx = tx.clone();
         let config = config.clone();
-        thread::spawn(move || worker(tx, &config));
+        thread::spawn(move || worker(&tx, &config));
     }
 
     let mut buffer = vec![[0_u32; 3]; (config.width * config.height) as usize];
@@ -361,27 +371,30 @@ fn main() {
 
         if changed {
             changed = false;
-            update_texture(config.width,
-                           config.height,
-                           config.window_width,
-                           config.window_height,
-                           &mut renderer,
-                           &mut texture,
-                           &buffer,
-                           &mut display_buffer);
-            renderer.window_mut()
+            update_texture(
+                (config.width, config.height),
+                (config.window_width, config.window_height),
+                &mut renderer,
+                &mut texture,
+                &buffer,
+                &mut display_buffer,
+            );
+            renderer
+                .window_mut()
                 .unwrap()
-                .set_title(&format!("{} Batches in {} seconds",
-                                    number_batches,
-                                    time::SystemTime::now()
-                                        .duration_since(start_time)
-                                        .unwrap()
-                                        .as_secs()))
+                .set_title(&format!(
+                    "{} Batches in {} seconds",
+                    number_batches,
+                    time::SystemTime::now()
+                        .duration_since(start_time)
+                        .unwrap()
+                        .as_secs()
+                ))
                 .unwrap();
         }
 
         for event in event_pump.poll_iter() {
-            if let Event::Quit { .. } =  event {
+            if let Event::Quit { .. } = event {
                 break 'all;
             }
         }
@@ -389,20 +402,23 @@ fn main() {
 
     if let Some(fname) = config.fname {
         let mut image_buffer = vec![0_u8; (config.width * config.height) as usize * 3];
-        color_map_buffer(config.width,
-                         config.height,
-                         config.width,
-                         config.height,
-                         &buffer,
-                         &mut image_buffer);
+        color_map_buffer(
+            config.width,
+            config.height,
+            config.width,
+            config.height,
+            &buffer,
+            &mut image_buffer,
+        );
 
         println!("Saving image...");
-        image::save_buffer(&fname,
-                           &image_buffer,
-                           config.width,
-                           config.height,
-                           image::RGB(8))
-            .unwrap();
+        image::save_buffer(
+            &fname,
+            &image_buffer,
+            config.width,
+            config.height,
+            image::RGB(8),
+        ).unwrap();
 
         if config.save_raw {
             #[derive(RustcEncodable, RustcDecodable)]
